@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import filecmp
 import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -455,3 +457,60 @@ def build_generator_command(
         "-preview",
         str(generator_preview_path(image_path)),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Generate-page output layout
+# ---------------------------------------------------------------------------
+
+def unique_copy_target(target: Path, source: Path) -> Path:
+    """Return *target*, or the first free ``<stem>-N<ext>`` sibling.
+
+    An existing file whose content matches *source* is reused so that
+    re-generating the same image keeps stable paths instead of piling up
+    identical copies. Files with different content get a numeric suffix so
+    images that share a name never overwrite each other's outputs.
+    """
+    if not target.exists():
+        return target
+    try:
+        if filecmp.cmp(source, target, shallow=False):
+            return target
+    except OSError:
+        return target
+    for index in range(2, 1000):
+        candidate = target.with_name(f"{target.stem}-{index}{target.suffix}")
+        if not candidate.exists():
+            return candidate
+        try:
+            if filecmp.cmp(source, candidate, shallow=False):
+                return candidate
+        except OSError:
+            return candidate
+    return target
+
+
+def prepare_generation_copies(
+    source: str | Path, image_dir: Path, output_dir: Path
+) -> tuple[Path, Path]:
+    """Copy the source image to the backup dir and the generator working dir.
+
+    Every generator output path is derived from its input path, so running
+    the generator on a copy inside ``output_dir/<stem>/`` collects all JSON
+    checkpoints of one image in that folder. The copy in *image_dir* is the
+    user-facing archive of images that have been generated. Returns
+    ``(backup_path, working_path)``.
+    """
+    source = Path(source)
+    image_dir.mkdir(parents=True, exist_ok=True)
+    working_dir = output_dir / source.stem
+    working_dir.mkdir(parents=True, exist_ok=True)
+
+    backup = unique_copy_target(image_dir / source.name, source)
+    working = unique_copy_target(working_dir / source.name, source)
+    source_resolved = source.resolve()
+    if backup.resolve() != source_resolved:
+        shutil.copyfile(source, backup)
+    if working.resolve() != source_resolved:
+        shutil.copyfile(source, working)
+    return backup, working

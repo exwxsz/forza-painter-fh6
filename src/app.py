@@ -33,7 +33,7 @@ if str(ROOT) not in sys.path:
 from fh6_vinyl_resources import load_vinyl_polygons
 from game_profiles import PROFILES
 from geometry_json import RECTANGLE, ROTATED_ELLIPSE, load_normalized_geometry
-from generator_backend import GENERATOR_EXE, GENERATOR_JSON_SCAN_SECONDS, GENERATOR_POLL_SLEEP_SECONDS, GENERATOR_PREVIEW_SCAN_SECONDS, USER_SETTINGS_DIR, best_geometry_jsons, build_generator_command, build_generator_env, generated_jsons, generated_preview_files, generator_preview_path, load_settings, preprocess_input_image, write_custom_settings, write_user_settings_preset
+from generator_backend import GENERATOR_EXE, GENERATOR_JSON_SCAN_SECONDS, GENERATOR_POLL_SLEEP_SECONDS, GENERATOR_PREVIEW_SCAN_SECONDS, USER_SETTINGS_DIR, best_geometry_jsons, build_generator_command, build_generator_env, generated_jsons, generated_preview_files, generator_preview_path, load_settings, prepare_generation_copies, preprocess_input_image, write_custom_settings, write_user_settings_preset
 from gpu_devices import device_env_overrides, find_device, find_device_by_label, list_gpu_devices
 from region_painter.state_manager import StateManager
 from region_painter.workflow import (
@@ -44,7 +44,7 @@ from region_painter.workflow import (
     prepare_region_pass,
     restore_checkpoint as region_restore_checkpoint,
 )
-from ui_preferences import load_ui_preferences, save_ui_preferences
+from ui_preferences import SUPPORTED_UI_LANGUAGES, load_ui_preferences, save_ui_preferences
 from version import APP_DISPLAY_NAME, __version__, app_title
 
 
@@ -53,6 +53,8 @@ from app_config import (
     PROBE_DIR,
     SESSION_PATH,
     FULL_SHAPE_ROOT,
+    GENERATED_IMAGE_DIR,
+    GENERATED_OUTPUT_DIR,
     MEMORY_SNAPSHOT_LIMIT_MB,
     PREVIEW_MAX,
     DETAILED_LOG_OUTPUT_LIMIT,
@@ -98,6 +100,38 @@ PREVIEW_CACHE_LIMIT = 24
 # fills the gaps; past ~4 the GPU saturates and VRAM becomes the limit.
 MAX_PARALLEL_GENERATIONS = 4
 LAYOUT_RESIZE_DEBOUNCE_MS = 180
+
+
+def enable_windows_dpi_awareness():
+    """Opt the process into Windows DPI awareness so fonts stay crisp.
+
+    A DPI-unaware process is bitmap-stretched by Windows on any display
+    scale above 100% (125%, 150%, ...), which blurs every font and makes
+    resizing look fuzzy. Every font in this app is declared in points, so
+    once the process reports real DPI, Tk rescales them automatically.
+    Must run before the Tk root window is created.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    try:
+        # Per-monitor v2 (Windows 10 1703+): crisp on every monitor and
+        # re-sharpens when the window is dragged between displays with
+        # different scale factors. DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4.
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except Exception:
+        pass
+    try:
+        # Per-monitor v1 (Windows 8.1+).
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            # System-aware fallback (Windows Vista+).
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 LAYOUT_SIZE_BUCKET = 64
 FH6_CIRCLE_BASE_SIZE = 63.0
 FH6_RECTANGLE_BASE_SIZE = 127.0
@@ -847,11 +881,19 @@ class App:
     def __init__(self, initial_images):
         ensure_dirs()
         self.root = Tk()
+        # Window geometry is in pixels, so scale it by the monitor DPI to
+        # keep the same physical size now that the process is DPI aware.
+        try:
+            dpi_scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
+        except Exception:
+            dpi_scale = 1.0
         self.root.title(app_title())
-        self.root.geometry("1420x900")
-        self.root.minsize(1180, 780)
+        self.root.geometry(f"{int(1420 * dpi_scale)}x{int(900 * dpi_scale)}")
+        self.root.minsize(int(1180 * dpi_scale), int(780 * dpi_scale))
         self.root.configure(bg=Theme.BG)
-        self.lang = "en"
+        self._ui_prefs = load_ui_preferences()
+        saved_lang = str(self._ui_prefs.get("ui_language") or "")
+        self.lang = saved_lang if saved_lang in SUPPORTED_UI_LANGUAGES else "en"
         self.queue = queue.Queue()
         self.shutdown_event = threading.Event()
         self.active_processes = set()
@@ -896,10 +938,10 @@ class App:
         self.progress_text = StringVar(value="")
         self.selected_profile = StringVar()
         self.selected_gpu = StringVar()
-        self.selected_gpu_key = str(load_ui_preferences().get("generator_gpu_device") or "")
+        self.selected_gpu_key = str(self._ui_prefs.get("generator_gpu_device") or "")
         self.gpu_devices = []
         self.gpu_scan_done = False
-        self.parallel_jobs = StringVar(value=str(load_ui_preferences().get("generator_parallel_jobs") or 1))
+        self.parallel_jobs = StringVar(value=str(self._ui_prefs.get("generator_parallel_jobs") or 1))
         self.outputs_lock = threading.Lock()
         self.selected_game = StringVar(value="fh6")
         self.selected_pid = StringVar()
@@ -1296,7 +1338,7 @@ class App:
         self.update_indicator.pack(side=RIGHT, padx=(8, 0))
         self.update_indicator.bind("<Button-1>", self.show_update_status)
         self.lang_combo = ttk.Combobox(title_row, values=list(LANGUAGES.keys()), state="readonly", width=10)
-        self.lang_combo.set("English")
+        self.lang_combo.set(next((name for name, code in LANGUAGES.items() if code == self.lang), "English"))
         self.lang_combo.pack(side=RIGHT)
         self.lang_combo.bind("<<ComboboxSelected>>", self._on_language)
         self._label(title_row, "language").pack(side=RIGHT, padx=(0, 6))
@@ -3407,6 +3449,10 @@ class App:
 
     def _on_language(self, _event=None):
         self.lang = LANGUAGES.get(self.lang_combo.get(), "en")
+        prefs = load_ui_preferences()
+        if prefs.get("ui_language") != self.lang:
+            prefs["ui_language"] = self.lang
+            save_ui_preferences(prefs)
         for widget, key, option in self.translated:
             try:
                 widget.config(**{option: tr(self.lang, key)})
@@ -3630,8 +3676,17 @@ class App:
                 added += 1
         return added
 
+    def _existing_output_jsons(self, image_path):
+        """JSONs already generated for an image, in the legacy and redirected locations."""
+        image_path = Path(image_path)
+        candidates = list(generated_jsons(image_path))
+        working_image = GENERATED_OUTPUT_DIR / image_path.stem / image_path.name
+        if working_image != image_path:
+            candidates.extend(generated_jsons(working_image))
+        return candidates
+
     def _load_existing_checkpoints_for_image(self, image_path, log_to_queue=False):
-        existing = best_geometry_jsons(generated_jsons(image_path))
+        existing = best_geometry_jsons(self._existing_output_jsons(image_path))
         if not existing:
             return 0
         added = self._add_json_paths(existing[:1])
@@ -4136,7 +4191,7 @@ class App:
         if files:
             self.show_source_preview(Path(files[0]))
         if added_paths:
-            existing_added = sum(1 for path in added_paths if generated_jsons(path))
+            existing_added = sum(1 for path in added_paths if self._existing_output_jsons(path))
             if existing_added:
                 self.log_line(tr(self.lang, "cannot_resume_checkpoint"))
 
@@ -4590,10 +4645,32 @@ class App:
             return "failed"
         return "done"
 
+    def _prepare_generation_paths(self, image_path):
+        """Copy the source image to image/ and to the out/<stem>/ working dir.
+
+        The generator derives every output path from its input path, so the
+        copy inside out/<stem>/ keeps all JSON of one image in one folder.
+        Falls back to the original path when the copies cannot be written.
+        """
+        source = Path(image_path)
+        try:
+            backup, working = prepare_generation_copies(
+                source, GENERATED_IMAGE_DIR, GENERATED_OUTPUT_DIR
+            )
+        except OSError as exc:
+            self.queue.put(("log", tr(self.lang, "generate_backup_failed").format(error=exc)))
+            return source
+        if backup.resolve() != source.resolve():
+            self.queue.put(("log", tr(self.lang, "generate_backup_saved").format(path=backup)))
+        self.queue.put(("log", tr(self.lang, "generate_output_folder").format(path=working.parent)))
+        return working
+
     def _run_one_generation(self, image_path, setting, generator_env, prefix="", track_eta=True):
         """Generate one image. Returns "done", "failed" or "stopped"."""
-        input_image = preprocess_input_image(image_path, setting)
-        if input_image != image_path:
+        source_image = Path(image_path)
+        working_image = self._prepare_generation_paths(source_image)
+        input_image = preprocess_input_image(working_image, setting)
+        if input_image != working_image:
             self.queue.put(("log", f"{prefix}Preprocessed image: {input_image}"))
         before = {path.resolve() for path in generated_jsons(input_image)}
         preview_path = generator_preview_path(input_image)
@@ -4719,6 +4796,8 @@ class App:
         folder = None
         if self.outputs:
             folder = self.outputs[-1].parent
+        elif GENERATED_OUTPUT_DIR.exists():
+            folder = GENERATED_OUTPUT_DIR
         elif self.images:
             folder = self.images[-1].parent
         if folder and folder.exists():
@@ -5638,6 +5717,7 @@ def main():
     parser.add_argument("--version", action="version", version=f"{APP_DISPLAY_NAME} {__version__}")
     parser.add_argument("images", nargs="*", help="Optional image files to preload.")
     args = parser.parse_args()
+    enable_windows_dpi_awareness()
     App(args.images).run()
 
 
