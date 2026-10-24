@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.9.7 / 2026-10-24
+
+- **Crisp fonts on high-DPI displays and remembered language** — The app is now per-monitor DPI aware: text renders at native pixel density at 125%/150% scaling, stays sharp while resizing, and re-sharpens when dragged between monitors with different scale factors. The title-bar language choice is saved to `runtime/settings/ui_preferences.json` and restored on the next launch instead of silently reverting to English.
+- **Per-image output folders** — `Generate JSON` no longer writes the checkpoint and final JSON files next to the source image. Every generated JSON of one image is collected in `out/<image stem>/` beside the app, and each source image sent to the generator is backed up to `image/`, so it is easy to see which images were already generated. The import page still picks up the best generated JSON automatically, and `Open output folder` opens the per-image folder. Region Paint, Text, and full-shape Export keep their existing output locations.
+
 ## v1.9.6 / 2026-08-31
 
 - **Graphics card picker** — `Generate JSON` step 2 has a `Graphics card` selector next to the quality profile. `Automatic (best GPU)` keeps the previous behaviour (the generator picks the discrete card with the most VRAM); choosing a specific card pins the bundled generator to it. Useful on multi-GPU machines to keep generation off the card that is running the game.
