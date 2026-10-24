@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased / 2026-10-24
+
+- **Crisp fonts on high-DPI displays and remembered language** — The app is now per-monitor DPI aware: text renders at native pixel density at 125%/150% scaling, stays sharp while resizing, and re-sharpens when dragged between monitors with different scale factors. The title-bar language choice is saved to `runtime/settings/ui_preferences.json` and restored on the next launch instead of silently reverting to English.
+  **高分屏字体清晰 + 记住语言** — 程序现在启用 Windows 按显示器 DPI 感知：125%/150% 缩放下文字按原生像素渲染，缩放窗口不再模糊，跨不同缩放比例的显示器拖动窗口也会重新变清晰。标题栏选择的语言会保存到 `runtime/settings/ui_preferences.json`，下次启动直接恢复，不再静默变回英文。
+- **Per-image output folders** — `Generate JSON` no longer writes the checkpoint and final JSON files next to the source image. Every generated JSON of one image is collected in `out/<image stem>/` beside the app, and each source image sent to the generator is backed up to `image/`, so it is easy to see which images were already generated. The import page still picks up the best generated JSON automatically, and `Open output folder` opens the per-image folder. Region Paint, Text, and full-shape Export keep their existing output locations.
+  **按图片归档输出目录** — 「生成 JSON」不再把 JSON 写到原图所在目录：一张图生成的所有 JSON 都归档到软件旁的 `out\<图片名>\`，同时每张送去生成的原图都会备份到 `image\`，方便确认哪些图已经生成过。导入页仍会自动引入效果最好的 JSON，「打开输出目录」直接打开对应图片的文件夹。区域绘制、文本、全形状导出的输出位置不变。
+
 ## v1.9.6 / 2026-08-31
 
 - **Graphics card picker** — `Generate JSON` step 2 has a `Graphics card` selector next to the quality profile. `Automatic (best GPU)` keeps the previous behaviour (the generator picks the discrete card with the most VRAM); choosing a specific card pins the bundled generator to it. Useful on multi-GPU machines to keep generation off the card that is running the game.

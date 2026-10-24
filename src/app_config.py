@@ -10,6 +10,10 @@ APP_DIR = SOURCE_DIR
 PROBE_DIR = ROOT / "webui-data" / "probes"
 SESSION_PATH = PROBE_DIR / "current-fh6-session.json"
 FULL_SHAPE_ROOT = ROOT / "runtime" / "full-shape-io"
+# Generate-page outputs: image/ archives every source image that was sent to
+# the generator; out/<image stem>/ collects all JSON files of one image.
+GENERATED_IMAGE_DIR = ROOT / "image"
+GENERATED_OUTPUT_DIR = ROOT / "out"
 
 
 # ---------------------------------------------------------------------------
